@@ -1,0 +1,17 @@
+[package]
+name = "gagent-ralph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Two-phase RALPH loop (PLANNING/BUILDING) for gAgent"
+
+[dependencies]
+gagent-core = { workspace = true }
+gagent-llm = { workspace = true }
+gagent-tools = { workspace = true }
+gagent-harness = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

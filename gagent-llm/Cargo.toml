@@ -1,0 +1,17 @@
+[package]
+name = "gagent-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLM provider trait and implementations (Ollama, OpenAI-compatible)"
+
+[dependencies]
+gagent-core = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }

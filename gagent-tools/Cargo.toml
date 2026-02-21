@@ -1,0 +1,15 @@
+[package]
+name = "gagent-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tool trait, registry, and built-in tools for gAgent"
+
+[dependencies]
+gagent-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

@@ -1,0 +1,14 @@
+[package]
+name = "gagent-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Path containment, Docker sandboxing, and execution policies"
+
+[dependencies]
+gagent-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
