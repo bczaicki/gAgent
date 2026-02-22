@@ -12,3 +12,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 toml = "0.8"
+
+[dev-dependencies]
+tempfile = { workspace = true }

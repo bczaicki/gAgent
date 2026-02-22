@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use gagent_core::Config;
+use gagent_core::{BootstrapFiles, Config, MAX_TOTAL_CHARS};
 use gagent_llm::{ChatMessage, ChatRequest, LlmProvider, OllamaProvider, StreamChunk};
 use futures::StreamExt;
 use std::io::{self, Write};
@@ -170,14 +170,46 @@ fn init_workspace() -> Result<()> {
     std::fs::create_dir_all(base.join("memory"))?;
     std::fs::create_dir_all(base.join("sessions"))?;
 
-    // Create template bootstrap files
+    // Create template bootstrap files with better guidance
     let templates = [
-        ("SOUL.md", "# Soul\n\nDescribe the agent's personality and tone here.\n"),
-        ("IDENTITY.md", "# Identity\n\nname: gAgent\nemoji: 🌱\n"),
-        ("USER.md", "# User Profile\n\nDescribe yourself and your preferences here.\n"),
-        ("AGENTS.md", "# Agents\n\nMulti-agent context goes here.\n"),
-        ("TOOLS.md", "# Tools\n\nTool usage guidance goes here.\n"),
-        ("MEMORY.md", "# Memory\n\nLong-term agent memory. Auto-maintained.\n"),
+        (
+            "IDENTITY.md",
+            "# Identity\n\nname: gAgent\nemoji: 🌱\n\n<!-- Format: \"name: YourName\" and \"emoji: 🚀\" on separate lines.\n     Character limit: 20,000 per file -->\n",
+        ),
+        (
+            "SOUL.md",
+            "# Soul\n\nYou are helpful, thoughtful, and precise. You communicate clearly and concisely.\n\n\
+            When working on code:\n\
+            - Prefer idiomatic patterns for the language\n\
+            - Write tests for new functionality\n\
+            - Follow existing conventions in the codebase\n\n\
+            When interacting with users:\n\
+            - Ask clarifying questions when requirements are unclear\n\
+            - Provide context for your decisions\n\
+            - Focus on practical solutions\n\n\
+            <!-- Character limit: 20,000 per file -->\n",
+        ),
+        (
+            "USER.md",
+            "# User Profile\n\n<!-- Tell the agent about yourself:\n\
+            - Your role and expertise\n\
+            - Preferred languages/frameworks\n\
+            - Coding style preferences\n\
+            - Project context\n\n\
+            Character limit: 20,000 per file -->\n",
+        ),
+        (
+            "AGENTS.md",
+            "# Agents\n\n<!-- Multi-agent context goes here.\n     Character limit: 20,000 per file -->\n",
+        ),
+        (
+            "TOOLS.md",
+            "# Tools\n\n<!-- Tool usage guidance goes here.\n     Character limit: 20,000 per file -->\n",
+        ),
+        (
+            "MEMORY.md",
+            "# Memory\n\n<!-- Long-term agent memory. Auto-maintained.\n     Character limit: 20,000 per file -->\n",
+        ),
     ];
 
     for (filename, content) in templates {
@@ -194,6 +226,18 @@ fn init_workspace() -> Result<()> {
 
     eprintln!("\n🌱 Workspace initialized at {}/", base.display());
     eprintln!("   Edit the files above to customize your agent.");
+
+    // Validate bootstrap files
+    match BootstrapFiles::load(base) {
+        Ok(bootstrap) => {
+            eprintln!("\n✓ Bootstrap files validated");
+            eprintln!("  Identity: {}", bootstrap.identity.display_prefix());
+            eprintln!("  Total: {} / {} chars", bootstrap.total_chars, MAX_TOTAL_CHARS);
+        }
+        Err(e) => {
+            eprintln!("\n⚠ Warning: {}", e);
+        }
+    }
 
     Ok(())
 }
