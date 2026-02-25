@@ -11,7 +11,7 @@ pub enum Role {
 }
 
 /// A tool call requested by the assistant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
     /// Tool function name.
     pub name: String,
@@ -21,7 +21,7 @@ pub struct ToolCall {
 }
 
 /// A chat message in the conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: Role,
     pub content: String,

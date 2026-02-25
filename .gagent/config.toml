@@ -1,0 +1,23 @@
+[llm]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "qwen3:8b"
+context_length = 8192
+temperature = 0.7
+
+[agent]
+name = "gAgent"
+emoji = "🌱"
+workspace_dir = ".gagent"
+timeout_secs = 600
+
+[session]
+sessions_dir = ".gagent/sessions"
+max_messages = 100
+max_context_chars = 150000
+
+[sandbox]
+mode = "off"
+allowed_paths = []
+confirm_commands = []
+denied_commands = []

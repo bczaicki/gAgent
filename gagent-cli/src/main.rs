@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use gagent_core::{BootstrapFiles, Config, MAX_TOTAL_CHARS};
-use gagent_llm::{ChatMessage, ChatRequest, LlmProvider, OllamaProvider, StreamChunk};
-use futures::StreamExt;
+use gagent_core::{BootstrapFiles, Config, PromptAssembler, MAX_TOTAL_CHARS};
+use gagent_harness::{AgentHarness, Session};
+use gagent_llm::OllamaProvider;
+use gagent_tools::{ToolRegistry, builtin::*};
 use std::io::{self, Write};
-use tracing::info;
 
 #[derive(Parser)]
 #[command(name = "gagent", about = "🌱 gAgent — your local, private AI agent")]
@@ -245,25 +245,49 @@ fn init_workspace() -> Result<()> {
 async fn run_interactive(
     model_override: Option<String>,
     url_override: Option<String>,
-    no_stream: bool,
+    _no_stream: bool, // TODO: implement streaming with harness.run_stream()
 ) -> Result<()> {
     // Load config
     let config_path = std::path::Path::new(".gagent/config.toml");
     let config = Config::load(config_path).unwrap_or_default();
 
-    let base_url = url_override
-        .unwrap_or_else(|| config.llm.base_url.clone());
-    let model = model_override
-        .unwrap_or_else(|| config.llm.model.clone());
+    let base_url = url_override.unwrap_or_else(|| config.llm.base_url.clone());
+    let model = model_override.unwrap_or_else(|| config.llm.model.clone());
 
     let provider = OllamaProvider::new(&base_url, &model);
 
-    eprintln!("🌱 gAgent — connected to {} (model: {})", base_url, model);
-    eprintln!("   Type your message and press Enter. Type 'quit' or 'exit' to stop.\n");
+    // Load bootstrap files
+    let workspace_dir = std::path::Path::new(".gagent");
+    let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
 
-    let mut history: Vec<ChatMessage> = vec![ChatMessage::system(
-        "You are gAgent, a helpful local AI assistant. You are running locally on the user's machine via Ollama. Be concise and helpful.",
-    )];
+    // Assemble system prompt
+    let assembler = PromptAssembler::new(config.clone(), bootstrap.clone());
+    let system_prompt = assembler.assemble();
+
+    tracing::info!(
+        "System prompt assembled: {} chars",
+        system_prompt.char_count
+    );
+
+    // Create agent harness
+    let harness = AgentHarness::new(config.clone(), system_prompt);
+
+    // Register built-in tools
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FileReadTool::new()));
+    registry.register(Box::new(FileWriteTool::new()));
+    registry.register(Box::new(FileSearchTool::new()));
+    registry.register(Box::new(ShellTool::new()));
+    registry.register(Box::new(GitTool::new()));
+
+    tracing::info!("Registered {} tools", registry.len());
+
+    // Create or load session
+    let mut session = Session::new();
+
+    eprintln!("🌱 gAgent — connected to {} (model: {})", base_url, model);
+    eprintln!("   {} tools available: file_read, file_write, file_search, shell, git", registry.len());
+    eprintln!("   Type your message and press Enter. Type 'quit' or 'exit' to stop.\n");
 
     loop {
         // Print prompt
@@ -279,69 +303,31 @@ async fn run_interactive(
         }
 
         if input == "quit" || input == "exit" {
+            // Save session
+            let session_path = Session::default_path(&config.session.sessions_dir, &session.id);
+            if let Some(parent) = session_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if let Err(e) = session.save(&session_path).await {
+                eprintln!("⚠ Failed to save session: {}", e);
+            } else {
+                eprintln!("💾 Session saved: {}", session.id);
+            }
             eprintln!("🌱 Goodbye!");
             break;
         }
 
-        history.push(ChatMessage::user(input));
-
-        let request = ChatRequest {
-            messages: history.clone(),
-            tools: vec![],
-            temperature: Some(config.llm.temperature),
-            stream: !no_stream,
-        };
-
-        if no_stream {
-            // Non-streaming mode
-            match provider.chat(request).await {
-                Ok(response) => {
-                    println!("\n🌱 {}\n", response.message.content);
-                    history.push(response.message);
-                }
-                Err(e) => {
-                    eprintln!("\n❌ Error: {e}\n");
-                }
+        // Run agent loop (this handles tool calls internally)
+        match harness.run(input, &mut session, &provider, &registry).await {
+            Ok(response) => {
+                println!("\n🌱 {}\n", response);
             }
-        } else {
-            // Streaming mode
-            match provider.chat_stream(request).await {
-                Ok(mut stream) => {
-                    eprint!("\n🌱 ");
-                    let mut full_response = String::new();
-
-                    while let Some(chunk_result) = stream.next().await {
-                        match chunk_result {
-                            Ok(StreamChunk::Text(text)) => {
-                                eprint!("{text}");
-                                io::stderr().flush()?;
-                                full_response.push_str(&text);
-                            }
-                            Ok(StreamChunk::Done { total_tokens }) => {
-                                if let Some(tokens) = total_tokens {
-                                    info!("Total tokens: {tokens}");
-                                }
-                                break;
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                eprintln!("\n❌ Stream error: {e}");
-                                break;
-                            }
-                        }
-                    }
-
-                    eprintln!("\n");
-                    if !full_response.is_empty() {
-                        history.push(ChatMessage::assistant(full_response));
-                    }
-                }
-                Err(e) => {
-                    eprintln!("\n❌ Error: {e}\n");
-                }
+            Err(e) => {
+                eprintln!("\n❌ Error: {}\n", e);
             }
         }
     }
 
     Ok(())
 }
+
