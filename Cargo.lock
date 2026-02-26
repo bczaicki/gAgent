@@ -378,6 +378,7 @@ dependencies = [
  "gagent-core",
  "gagent-harness",
  "gagent-llm",
+ "gagent-mcp",
  "gagent-tools",
  "serde_json",
  "tokio",
@@ -435,6 +436,7 @@ dependencies = [
 name = "gagent-mcp"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "gagent-core",
  "gagent-tools",
  "serde",
@@ -466,6 +468,7 @@ dependencies = [
  "gagent-core",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
