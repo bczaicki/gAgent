@@ -60,7 +60,10 @@ cargo run -p gagent-cli -- --help
 cargo run -p gagent-cli -- run                   # interactive chat (needs Ollama running)
 cargo run -p gagent-cli -- init                   # scaffold .gagent/ workspace
 cargo run -p gagent-cli -- config show            # print current config
-cargo run -p gagent-cli -- ralph run spec.md      # RALPH loop (Phase 3)
+# Inside the interactive session, use slash commands:
+#   /plan spec.md       — generate IMPLEMENTATION_PLAN.md
+#   /build              — run building phase
+#   /run spec.md        — full plan + build cycle
 ```
 
 **Always run `cargo test --workspace` after making changes.** Tests must pass before any commit.
@@ -189,7 +192,7 @@ Workspace structure, gagent-core (types/config/errors), gagent-llm (LlmProvider 
 - `gagent-ralph/src/ralph_loop.rs` — two-phase state machine
 - `gagent-ralph/src/plan.rs` — parse/update IMPLEMENTATION_PLAN.md
 - `gagent-ralph/src/notification.rs` — JSON notifications to `.ralph/pending-notification.txt`
-- CLI: `gagent ralph plan|build|run` with `--max-iterations` and `--backpressure`
+- CLI: slash commands `/plan`, `/build`, `/run` inside `gagent run` interactive session; supports `--max-iter` flag
 - MockProvider for testing, SystemPrompt derives Clone
 
 ### Phase 4: Memory System — NOT STARTED
@@ -241,7 +244,7 @@ Future deps (not yet added): `bollard` (Docker), `rmcp` (MCP), `notify` (file wa
 5. **Don't create circular crate dependencies** — gagent-core is the leaf, everything else builds on it
 6. **Don't use `println!` for debug output** — use `tracing::debug!` / `tracing::info!`
 7. **Don't skip tests** — every new module should have `#[cfg(test)] mod tests` with at least basic coverage
-8. **Don't break the existing CLI interface** — `run`, `init`, `ralph`, `config` are the stable subcommands
+8. **Don't break the existing CLI interface** — `run`, `init`, `config` are the stable subcommands; RALPH is accessed via `/plan`, `/build`, `/run` slash commands inside the interactive session
 
 ---
 

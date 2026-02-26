@@ -40,48 +40,10 @@ enum Commands {
     /// Initialize a .gagent workspace in the current directory
     Init,
 
-    /// RALPH loop commands (plan + build)
-    Ralph {
-        #[command(subcommand)]
-        action: RalphAction,
-    },
-
     /// Show or modify configuration
     Config {
         #[command(subcommand)]
         action: ConfigAction,
-    },
-}
-
-#[derive(Subcommand)]
-enum RalphAction {
-    /// Generate an implementation plan from a spec
-    Plan {
-        /// Path to the spec/PRD file
-        spec: String,
-
-        /// Model to use
-        #[arg(short, long)]
-        model: Option<String>,
-    },
-    /// Execute the building phase from an existing plan
-    Build {
-        /// Maximum iterations
-        #[arg(long, default_value = "10")]
-        max_iterations: usize,
-    },
-    /// Run both plan and build phases
-    Run {
-        /// Path to the spec/PRD file
-        spec: String,
-
-        /// Maximum build iterations
-        #[arg(long, default_value = "10")]
-        max_iterations: usize,
-
-        /// Backpressure command (run after each iteration)
-        #[arg(long)]
-        backpressure: Option<String>,
     },
 }
 
@@ -120,23 +82,6 @@ async fn main() -> Result<()> {
         }
         Commands::Init => {
             init_workspace()?;
-        }
-        Commands::Ralph { action } => {
-            match action {
-                RalphAction::Plan { spec, model } => {
-                    run_ralph_plan(&spec, model).await?;
-                }
-                RalphAction::Build { max_iterations } => {
-                    run_ralph_build(max_iterations).await?;
-                }
-                RalphAction::Run {
-                    spec,
-                    max_iterations,
-                    backpressure,
-                } => {
-                    run_ralph_full(&spec, max_iterations, backpressure.is_some()).await?;
-                }
-            }
         }
         Commands::Config { action } => match action {
             ConfigAction::Show => {
@@ -287,7 +232,14 @@ async fn run_interactive(
 
     eprintln!("🌱 gAgent — connected to {} (model: {})", base_url, model);
     eprintln!("   {} tools available: file_read, file_write, file_search, shell, git", registry.len());
-    eprintln!("   Type your message and press Enter. Type 'quit' or 'exit' to stop.\n");
+    eprintln!("   Type your message and press Enter. Type 'quit' or 'exit' to stop.");
+    eprintln!();
+    eprintln!("   Slash commands:");
+    eprintln!("     /plan <spec>              — generate an implementation plan");
+    eprintln!("     /build [--max-iter N]     — execute the building phase");
+    eprintln!("     /run <spec> [--max-iter N] — run full plan + build cycle");
+    eprintln!("     /help                     — show this help");
+    eprintln!();
 
     loop {
         // Print prompt
@@ -317,6 +269,12 @@ async fn run_interactive(
             break;
         }
 
+        // Dispatch slash commands
+        if input.starts_with('/') {
+            handle_slash_command(input, &config).await?;
+            continue;
+        }
+
         // Run agent loop (this handles tool calls internally)
         match harness.run(input, &mut session, &provider, &registry).await {
             Ok(response) => {
@@ -331,72 +289,107 @@ async fn run_interactive(
     Ok(())
 }
 
-async fn run_ralph_plan(spec_path: &str, model_override: Option<String>) -> Result<()> {
-    eprintln!("🌱 RALPH PLANNING phase");
-    eprintln!("   Spec: {}", spec_path);
+async fn handle_slash_command(input: &str, config: &Config) -> Result<()> {
+    let parts: Vec<&str> = input.splitn(2, ' ').collect();
+    let cmd = parts[0];
+    let args = parts.get(1).copied().unwrap_or("").trim();
 
-    // Load config
-    let config_path = std::path::Path::new(".gagent/config.toml");
-    let config = Config::load(config_path).unwrap_or_default();
+    match cmd {
+        "/help" => {
+            eprintln!();
+            eprintln!("  ╔══════════════════════════════════════════════════╗");
+            eprintln!("  ║              Slash Commands                      ║");
+            eprintln!("  ╠══════════════════════════════════════════════════╣");
+            eprintln!("  ║  /plan <spec>               Generate a plan      ║");
+            eprintln!("  ║  /build [--max-iter N]      Execute build phase  ║");
+            eprintln!("  ║  /run <spec> [--max-iter N] Plan + build cycle   ║");
+            eprintln!("  ║  /help                      Show this help       ║");
+            eprintln!("  ╚══════════════════════════════════════════════════╝");
+            eprintln!();
+        }
 
-    let model = model_override.unwrap_or_else(|| config.llm.model.clone());
-    let provider = OllamaProvider::new(&config.llm.base_url, &model);
+        "/plan" => {
+            if args.is_empty() {
+                eprintln!("  ✗ /plan requires a spec file path");
+                eprintln!("    Usage: /plan <spec>");
+                return Ok(());
+            }
+            eprintln!();
+            eprintln!("  ┌─ /plan ─────────────────────────────────────────");
+            eprintln!("  │  Spec: {}", args);
+            eprintln!("  └─────────────────────────────────────────────────");
+            eprintln!();
+            run_ralph_plan(args, None, config).await?;
+        }
 
-    // Load bootstrap files
-    let workspace_dir = std::path::Path::new(".gagent");
-    let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
+        "/build" => {
+            let max_iterations = parse_max_iter(args).unwrap_or(10);
+            eprintln!();
+            eprintln!("  ┌─ /build ────────────────────────────────────────");
+            eprintln!("  │  Max iterations: {}", max_iterations);
+            eprintln!("  └─────────────────────────────────────────────────");
+            eprintln!();
+            run_ralph_build(max_iterations, config).await?;
+        }
 
-    // Assemble system prompt
-    let assembler = PromptAssembler::new(config.clone(), bootstrap);
-    let system_prompt = assembler.assemble();
+        "/run" => {
+            let (spec, max_iterations) = parse_run_args(args);
+            if spec.is_empty() {
+                eprintln!("  ✗ /run requires a spec file path");
+                eprintln!("    Usage: /run <spec> [--max-iter N]");
+                return Ok(());
+            }
+            eprintln!();
+            eprintln!("  ┌─ /run ──────────────────────────────────────────");
+            eprintln!("  │  Spec: {}", spec);
+            eprintln!("  │  Max iterations: {}", max_iterations);
+            eprintln!("  └─────────────────────────────────────────────────");
+            eprintln!();
+            run_ralph_full(spec, max_iterations, false, config).await?;
+        }
 
-    // Create tool registry
-    let mut registry = ToolRegistry::new();
-    registry.register(Box::new(FileReadTool::new()));
-    registry.register(Box::new(FileWriteTool::new()));
-    registry.register(Box::new(FileSearchTool::new()));
-    registry.register(Box::new(ShellTool::new()));
-    registry.register(Box::new(GitTool::new()));
-
-    // Create RALPH config
-    let mut ralph_config = RalphConfig::default();
-    ralph_config.spec_path = Some(PathBuf::from(spec_path));
-
-    // Create .ralph directory if it doesn't exist
-    std::fs::create_dir_all(&ralph_config.ralph_dir)?;
-
-    // Run planning phase
-    let ralph_loop = RalphLoop::new(config, ralph_config);
-    ralph_loop
-        .run_planning(&provider, &registry, system_prompt)
-        .await?;
-
-    eprintln!("\n✓ Planning complete!");
-    eprintln!("   Plan written to: IMPLEMENTATION_PLAN.md");
-    eprintln!("   Next: Run `gagent ralph build` to start building");
+        _ => {
+            eprintln!("  ✗ Unknown command: {}", cmd);
+            eprintln!("    Type /help to see available commands.");
+        }
+    }
 
     Ok(())
 }
 
-async fn run_ralph_build(max_iterations: usize) -> Result<()> {
-    eprintln!("🌱 RALPH BUILDING phase");
-    eprintln!("   Max iterations: {}", max_iterations);
+/// Parse `--max-iter N` from a string, returning None if not found.
+fn parse_max_iter(args: &str) -> Option<usize> {
+    let mut parts = args.split_whitespace();
+    while let Some(part) = parts.next() {
+        if part == "--max-iter" {
+            if let Some(n) = parts.next() {
+                return n.parse().ok();
+            }
+        }
+    }
+    None
+}
 
-    // Load config
-    let config_path = std::path::Path::new(".gagent/config.toml");
-    let config = Config::load(config_path).unwrap_or_default();
+/// Parse `/run <spec> [--max-iter N]` arguments.
+fn parse_run_args(args: &str) -> (&str, usize) {
+    let max_iter = parse_max_iter(args).unwrap_or(10);
+    // spec is the first token (before any --flags)
+    let spec = args
+        .split_whitespace()
+        .find(|s| !s.starts_with('-'))
+        .unwrap_or("");
+    (spec, max_iter)
+}
 
-    let provider = OllamaProvider::new(&config.llm.base_url, &config.llm.model);
+async fn run_ralph_plan(spec_path: &str, model_override: Option<String>, config: &Config) -> Result<()> {
+    let model = model_override.unwrap_or_else(|| config.llm.model.clone());
+    let provider = OllamaProvider::new(&config.llm.base_url, &model);
 
-    // Load bootstrap files
     let workspace_dir = std::path::Path::new(".gagent");
     let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
-
-    // Assemble system prompt
     let assembler = PromptAssembler::new(config.clone(), bootstrap);
     let system_prompt = assembler.assemble();
 
-    // Create tool registry
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(FileReadTool::new()));
     registry.register(Box::new(FileWriteTool::new()));
@@ -404,20 +397,48 @@ async fn run_ralph_build(max_iterations: usize) -> Result<()> {
     registry.register(Box::new(ShellTool::new()));
     registry.register(Box::new(GitTool::new()));
 
-    // Create RALPH config
     let mut ralph_config = RalphConfig::default();
-    ralph_config.max_iterations = max_iterations;
-
-    // Create .ralph directory if it doesn't exist
+    ralph_config.spec_path = Some(PathBuf::from(spec_path));
     std::fs::create_dir_all(&ralph_config.ralph_dir)?;
 
-    // Run building phase
-    let ralph_loop = RalphLoop::new(config, ralph_config);
+    let ralph_loop = RalphLoop::new(config.clone(), ralph_config);
+    ralph_loop
+        .run_planning(&provider, &registry, system_prompt)
+        .await?;
+
+    eprintln!("  ✓ Planning complete — IMPLEMENTATION_PLAN.md written");
+    eprintln!("    Run /build to start building.");
+    eprintln!();
+
+    Ok(())
+}
+
+async fn run_ralph_build(max_iterations: usize, config: &Config) -> Result<()> {
+    let provider = OllamaProvider::new(&config.llm.base_url, &config.llm.model);
+
+    let workspace_dir = std::path::Path::new(".gagent");
+    let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
+    let assembler = PromptAssembler::new(config.clone(), bootstrap);
+    let system_prompt = assembler.assemble();
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FileReadTool::new()));
+    registry.register(Box::new(FileWriteTool::new()));
+    registry.register(Box::new(FileSearchTool::new()));
+    registry.register(Box::new(ShellTool::new()));
+    registry.register(Box::new(GitTool::new()));
+
+    let mut ralph_config = RalphConfig::default();
+    ralph_config.max_iterations = max_iterations;
+    std::fs::create_dir_all(&ralph_config.ralph_dir)?;
+
+    let ralph_loop = RalphLoop::new(config.clone(), ralph_config);
     ralph_loop
         .run_building(&provider, &registry, system_prompt)
         .await?;
 
-    eprintln!("\n✓ Building phase complete!");
+    eprintln!("  ✓ Building phase complete!");
+    eprintln!();
 
     Ok(())
 }
@@ -426,27 +447,15 @@ async fn run_ralph_full(
     spec_path: &str,
     max_iterations: usize,
     backpressure: bool,
+    config: &Config,
 ) -> Result<()> {
-    eprintln!("🌱 RALPH full cycle (PLANNING + BUILDING)");
-    eprintln!("   Spec: {}", spec_path);
-    eprintln!("   Max iterations: {}", max_iterations);
-    eprintln!("   Backpressure: {}", backpressure);
-
-    // Load config
-    let config_path = std::path::Path::new(".gagent/config.toml");
-    let config = Config::load(config_path).unwrap_or_default();
-
     let provider = OllamaProvider::new(&config.llm.base_url, &config.llm.model);
 
-    // Load bootstrap files
     let workspace_dir = std::path::Path::new(".gagent");
     let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
-
-    // Assemble system prompt
     let assembler = PromptAssembler::new(config.clone(), bootstrap);
     let system_prompt = assembler.assemble();
 
-    // Create tool registry
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(FileReadTool::new()));
     registry.register(Box::new(FileWriteTool::new()));
@@ -454,22 +463,19 @@ async fn run_ralph_full(
     registry.register(Box::new(ShellTool::new()));
     registry.register(Box::new(GitTool::new()));
 
-    // Create RALPH config
     let mut ralph_config = RalphConfig::default();
     ralph_config.spec_path = Some(PathBuf::from(spec_path));
     ralph_config.max_iterations = max_iterations;
     ralph_config.backpressure = backpressure;
-
-    // Create .ralph directory if it doesn't exist
     std::fs::create_dir_all(&ralph_config.ralph_dir)?;
 
-    // Run full cycle
-    let ralph_loop = RalphLoop::new(config, ralph_config);
+    let ralph_loop = RalphLoop::new(config.clone(), ralph_config);
     ralph_loop
         .run_full_cycle(&provider, &registry, system_prompt)
         .await?;
 
-    eprintln!("\n✓ RALPH cycle complete!");
+    eprintln!("  ✓ RALPH cycle complete!");
+    eprintln!();
 
     Ok(())
 }
