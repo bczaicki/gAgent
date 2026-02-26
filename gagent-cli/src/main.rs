@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use gagent_core::{BootstrapFiles, Config, PromptAssembler, MAX_TOTAL_CHARS};
 use gagent_harness::{AgentHarness, Session};
 use gagent_llm::OllamaProvider;
+use gagent_mcp::{McpBridge, parse_mcp_servers};
 use gagent_tools::{ToolRegistry, builtin::{FileReadTool, FileWriteTool, FileSearchTool, ShellTool, GitTool, MemoryReadTool, MemoryWriteTool, MemorySearchTool}};
 use std::io::{self, Write};
 
@@ -224,6 +225,20 @@ fn init_workspace() -> Result<()> {
     config.save(&config_path)?;
     eprintln!("  Created {}", config_path.display());
 
+    // Write MCP config template
+    let mcp_config_path = base.join("mcp.json");
+    let mcp_template = serde_json::json!({
+        "_comment": "Add MCP servers here. Example:",
+        "_example": {
+            "filesystem": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+            }
+        }
+    });
+    std::fs::write(&mcp_config_path, serde_json::to_string_pretty(&mcp_template)?)?;
+    eprintln!("  Created {}", mcp_config_path.display());
+
     eprintln!("\n🌱 Workspace initialized at {}/", base.display());
     eprintln!("   Edit the files above to customize your agent.");
 
@@ -283,13 +298,37 @@ async fn run_interactive(
     registry.register(Box::new(MemoryWriteTool::new()));
     registry.register(Box::new(MemorySearchTool::new()));
 
+    // Load MCP servers from .gagent/mcp.json if it exists
+    let mcp_config_path = workspace_dir.join("mcp.json");
+    if mcp_config_path.exists() {
+        match std::fs::read_to_string(&mcp_config_path)
+            .and_then(|s| Ok(serde_json::from_str::<serde_json::Value>(&s).unwrap_or_default()))
+        {
+            Ok(mcp_config) => {
+                let servers = parse_mcp_servers(&mcp_config);
+                if !servers.is_empty() {
+                    let mut bridge = McpBridge::new();
+                    for server in servers {
+                        bridge.add_server(server);
+                    }
+                    if let Err(e) = bridge.register_all(&mut registry).await {
+                        eprintln!("⚠ MCP bridge error: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠ Failed to read MCP config: {}", e);
+            }
+        }
+    }
+
     tracing::info!("Registered {} tools", registry.len());
 
     // Create or load session
     let mut session = Session::new();
 
     eprintln!("🌱 gAgent — connected to {} (model: {})", base_url, model);
-    eprintln!("   {} tools available: file_read, file_write, file_search, shell, git, memory_read, memory_write, memory_search", registry.len());
+    eprintln!("   {} tools available (built-in + MCP)", registry.len());
     eprintln!("   Type your message and press Enter. Type 'quit' or 'exit' to stop.\n");
 
     loop {
