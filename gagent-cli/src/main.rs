@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use gagent_core::{BootstrapFiles, Config, PromptAssembler, MAX_TOTAL_CHARS};
 use gagent_harness::{AgentHarness, Session};
 use gagent_llm::OllamaProvider;
-use gagent_tools::{ToolRegistry, builtin::*};
+use gagent_tools::{ToolRegistry, builtin::{FileReadTool, FileWriteTool, FileSearchTool, ShellTool, GitTool, MemoryReadTool, MemoryWriteTool, MemorySearchTool}};
 use std::io::{self, Write};
 
 #[derive(Parser)]
@@ -279,6 +279,9 @@ async fn run_interactive(
     registry.register(Box::new(FileSearchTool::new()));
     registry.register(Box::new(ShellTool::new()));
     registry.register(Box::new(GitTool::new()));
+    registry.register(Box::new(MemoryReadTool::new()));
+    registry.register(Box::new(MemoryWriteTool::new()));
+    registry.register(Box::new(MemorySearchTool::new()));
 
     tracing::info!("Registered {} tools", registry.len());
 
@@ -286,7 +289,7 @@ async fn run_interactive(
     let mut session = Session::new();
 
     eprintln!("🌱 gAgent — connected to {} (model: {})", base_url, model);
-    eprintln!("   {} tools available: file_read, file_write, file_search, shell, git", registry.len());
+    eprintln!("   {} tools available: file_read, file_write, file_search, shell, git, memory_read, memory_write, memory_search", registry.len());
     eprintln!("   Type your message and press Enter. Type 'quit' or 'exit' to stop.\n");
 
     loop {
