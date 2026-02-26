@@ -7,12 +7,22 @@ pub struct PromptAssembler {
 }
 
 /// Assembled system prompt with metadata.
+#[derive(Debug, Clone)]
 pub struct SystemPrompt {
     /// Complete assembled prompt text.
     pub text: String,
 
     /// Total character count.
     pub char_count: usize,
+}
+
+impl SystemPrompt {
+    /// Create a minimal system prompt for testing.
+    pub fn minimal() -> Self {
+        let text = "You are a helpful AI agent.".to_string();
+        let char_count = text.chars().count();
+        Self { text, char_count }
+    }
 }
 
 impl PromptAssembler {

@@ -3,8 +3,10 @@ use clap::{Parser, Subcommand};
 use gagent_core::{BootstrapFiles, Config, PromptAssembler, MAX_TOTAL_CHARS};
 use gagent_harness::{AgentHarness, Session};
 use gagent_llm::OllamaProvider;
+use gagent_ralph::{RalphConfig, RalphLoop};
 use gagent_tools::{ToolRegistry, builtin::*};
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "gagent", about = "🌱 gAgent — your local, private AI agent")]
@@ -121,20 +123,18 @@ async fn main() -> Result<()> {
         }
         Commands::Ralph { action } => {
             match action {
-                RalphAction::Plan { spec, model: _ } => {
-                    eprintln!("🌱 RALPH planning not yet implemented. Spec: {spec}");
+                RalphAction::Plan { spec, model } => {
+                    run_ralph_plan(&spec, model).await?;
                 }
                 RalphAction::Build { max_iterations } => {
-                    eprintln!("🌱 RALPH building not yet implemented. Max iterations: {max_iterations}");
+                    run_ralph_build(max_iterations).await?;
                 }
                 RalphAction::Run {
                     spec,
                     max_iterations,
                     backpressure,
                 } => {
-                    eprintln!(
-                        "🌱 RALPH run not yet implemented. Spec: {spec}, max: {max_iterations}, backpressure: {backpressure:?}"
-                    );
+                    run_ralph_full(&spec, max_iterations, backpressure.is_some()).await?;
                 }
             }
         }
@@ -331,3 +331,145 @@ async fn run_interactive(
     Ok(())
 }
 
+async fn run_ralph_plan(spec_path: &str, model_override: Option<String>) -> Result<()> {
+    eprintln!("🌱 RALPH PLANNING phase");
+    eprintln!("   Spec: {}", spec_path);
+
+    // Load config
+    let config_path = std::path::Path::new(".gagent/config.toml");
+    let config = Config::load(config_path).unwrap_or_default();
+
+    let model = model_override.unwrap_or_else(|| config.llm.model.clone());
+    let provider = OllamaProvider::new(&config.llm.base_url, &model);
+
+    // Load bootstrap files
+    let workspace_dir = std::path::Path::new(".gagent");
+    let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
+
+    // Assemble system prompt
+    let assembler = PromptAssembler::new(config.clone(), bootstrap);
+    let system_prompt = assembler.assemble();
+
+    // Create tool registry
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FileReadTool::new()));
+    registry.register(Box::new(FileWriteTool::new()));
+    registry.register(Box::new(FileSearchTool::new()));
+    registry.register(Box::new(ShellTool::new()));
+    registry.register(Box::new(GitTool::new()));
+
+    // Create RALPH config
+    let mut ralph_config = RalphConfig::default();
+    ralph_config.spec_path = Some(PathBuf::from(spec_path));
+
+    // Create .ralph directory if it doesn't exist
+    std::fs::create_dir_all(&ralph_config.ralph_dir)?;
+
+    // Run planning phase
+    let ralph_loop = RalphLoop::new(config, ralph_config);
+    ralph_loop
+        .run_planning(&provider, &registry, system_prompt)
+        .await?;
+
+    eprintln!("\n✓ Planning complete!");
+    eprintln!("   Plan written to: IMPLEMENTATION_PLAN.md");
+    eprintln!("   Next: Run `gagent ralph build` to start building");
+
+    Ok(())
+}
+
+async fn run_ralph_build(max_iterations: usize) -> Result<()> {
+    eprintln!("🌱 RALPH BUILDING phase");
+    eprintln!("   Max iterations: {}", max_iterations);
+
+    // Load config
+    let config_path = std::path::Path::new(".gagent/config.toml");
+    let config = Config::load(config_path).unwrap_or_default();
+
+    let provider = OllamaProvider::new(&config.llm.base_url, &config.llm.model);
+
+    // Load bootstrap files
+    let workspace_dir = std::path::Path::new(".gagent");
+    let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
+
+    // Assemble system prompt
+    let assembler = PromptAssembler::new(config.clone(), bootstrap);
+    let system_prompt = assembler.assemble();
+
+    // Create tool registry
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FileReadTool::new()));
+    registry.register(Box::new(FileWriteTool::new()));
+    registry.register(Box::new(FileSearchTool::new()));
+    registry.register(Box::new(ShellTool::new()));
+    registry.register(Box::new(GitTool::new()));
+
+    // Create RALPH config
+    let mut ralph_config = RalphConfig::default();
+    ralph_config.max_iterations = max_iterations;
+
+    // Create .ralph directory if it doesn't exist
+    std::fs::create_dir_all(&ralph_config.ralph_dir)?;
+
+    // Run building phase
+    let ralph_loop = RalphLoop::new(config, ralph_config);
+    ralph_loop
+        .run_building(&provider, &registry, system_prompt)
+        .await?;
+
+    eprintln!("\n✓ Building phase complete!");
+
+    Ok(())
+}
+
+async fn run_ralph_full(
+    spec_path: &str,
+    max_iterations: usize,
+    backpressure: bool,
+) -> Result<()> {
+    eprintln!("🌱 RALPH full cycle (PLANNING + BUILDING)");
+    eprintln!("   Spec: {}", spec_path);
+    eprintln!("   Max iterations: {}", max_iterations);
+    eprintln!("   Backpressure: {}", backpressure);
+
+    // Load config
+    let config_path = std::path::Path::new(".gagent/config.toml");
+    let config = Config::load(config_path).unwrap_or_default();
+
+    let provider = OllamaProvider::new(&config.llm.base_url, &config.llm.model);
+
+    // Load bootstrap files
+    let workspace_dir = std::path::Path::new(".gagent");
+    let bootstrap = BootstrapFiles::load(workspace_dir).unwrap_or_default();
+
+    // Assemble system prompt
+    let assembler = PromptAssembler::new(config.clone(), bootstrap);
+    let system_prompt = assembler.assemble();
+
+    // Create tool registry
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FileReadTool::new()));
+    registry.register(Box::new(FileWriteTool::new()));
+    registry.register(Box::new(FileSearchTool::new()));
+    registry.register(Box::new(ShellTool::new()));
+    registry.register(Box::new(GitTool::new()));
+
+    // Create RALPH config
+    let mut ralph_config = RalphConfig::default();
+    ralph_config.spec_path = Some(PathBuf::from(spec_path));
+    ralph_config.max_iterations = max_iterations;
+    ralph_config.backpressure = backpressure;
+
+    // Create .ralph directory if it doesn't exist
+    std::fs::create_dir_all(&ralph_config.ralph_dir)?;
+
+    // Run full cycle
+    let ralph_loop = RalphLoop::new(config, ralph_config);
+    ralph_loop
+        .run_full_cycle(&provider, &registry, system_prompt)
+        .await?;
+
+    eprintln!("\n✓ RALPH cycle complete!");
+
+    Ok(())
+}

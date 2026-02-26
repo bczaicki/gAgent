@@ -185,11 +185,12 @@ Workspace structure, gagent-core (types/config/errors), gagent-llm (LlmProvider 
 - `gagent-harness/src/context.rs` — approximate token counting, auto-compaction
 - 600s default timeout, configurable
 
-### Phase 3: RALPH Loop — NOT STARTED
+### Phase 3: RALPH Loop ✅ COMPLETE
 - `gagent-ralph/src/ralph_loop.rs` — two-phase state machine
 - `gagent-ralph/src/plan.rs` — parse/update IMPLEMENTATION_PLAN.md
 - `gagent-ralph/src/notification.rs` — JSON notifications to `.ralph/pending-notification.txt`
 - CLI: `gagent ralph plan|build|run` with `--max-iterations` and `--backpressure`
+- MockProvider for testing, SystemPrompt derives Clone
 
 ### Phase 4: Memory System — NOT STARTED
 - `gagent-core/src/memory.rs` — read/write/search memory files

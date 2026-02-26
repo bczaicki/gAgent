@@ -14,6 +14,7 @@ gagent-core = { workspace = true }
 gagent-llm = { workspace = true }
 gagent-tools = { workspace = true }
 gagent-harness = { workspace = true }
+gagent-ralph = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
