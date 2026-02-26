@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use gagent_core::{BootstrapFiles, Config, PromptAssembler, MAX_TOTAL_CHARS};
 use gagent_harness::{AgentHarness, Session};
-use gagent_llm::OllamaProvider;
+use gagent_harness::CrashRecovery;
+use gagent_llm::{OllamaProvider, OpenAiProvider, RetryConfig, RetryProvider};
 use gagent_mcp::{McpBridge, parse_mcp_servers};
 use gagent_tools::{ToolRegistry, builtin::{FileReadTool, FileWriteTool, FileSearchTool, ShellTool, GitTool, MemoryReadTool, MemoryWriteTool, MemorySearchTool}};
 use std::io::{self, Write};
@@ -269,7 +270,21 @@ async fn run_interactive(
     let base_url = url_override.unwrap_or_else(|| config.llm.base_url.clone());
     let model = model_override.unwrap_or_else(|| config.llm.model.clone());
 
-    let provider = OllamaProvider::new(&base_url, &model);
+    // Choose provider based on config
+    let retry_config = RetryConfig::default();
+    let provider: Box<dyn gagent_llm::LlmProvider> = match config.llm.provider.as_str() {
+        "openai" | "openai-compatible" => {
+            let api_key = std::env::var("OPENAI_API_KEY").ok();
+            Box::new(RetryProvider::new(
+                OpenAiProvider::new(&base_url, &model, api_key),
+                retry_config,
+            ))
+        }
+        _ => Box::new(RetryProvider::new(
+            OllamaProvider::new(&base_url, &model),
+            retry_config,
+        )),
+    };
 
     // Load bootstrap files
     let workspace_dir = std::path::Path::new(".gagent");
@@ -324,8 +339,19 @@ async fn run_interactive(
 
     tracing::info!("Registered {} tools", registry.len());
 
-    // Create or load session
-    let mut session = Session::new();
+    // Set up crash recovery
+    let crash_recovery = CrashRecovery::new(workspace_dir.join("crash_recovery.json"));
+
+    // Create or load session (resume from crash if checkpoint exists)
+    let mut session = if crash_recovery.has_checkpoint() {
+        eprintln!("⚠ Previous crash detected. Resuming from checkpoint...");
+        match crash_recovery.read_checkpoint() {
+            Ok(json) => Session::from_json(&json).unwrap_or_else(|_| Session::new()),
+            Err(_) => Session::new(),
+        }
+    } else {
+        Session::new()
+    };
 
     eprintln!("🌱 gAgent — connected to {} (model: {})", base_url, model);
     eprintln!("   {} tools available (built-in + MCP)", registry.len());
@@ -355,14 +381,20 @@ async fn run_interactive(
             } else {
                 eprintln!("💾 Session saved: {}", session.id);
             }
+            // Clear crash recovery checkpoint on clean exit
+            let _ = crash_recovery.clear_checkpoint();
             eprintln!("🌱 Goodbye!");
             break;
         }
 
         // Run agent loop (this handles tool calls internally)
-        match harness.run(input, &mut session, &provider, &registry).await {
+        match harness.run(input, &mut session, provider.as_ref(), &registry).await {
             Ok(response) => {
                 println!("\n🌱 {}\n", response);
+                // Write crash recovery checkpoint after each successful exchange
+                if let Ok(json) = session.to_json() {
+                    let _ = crash_recovery.write_checkpoint(&json);
+                }
             }
             Err(e) => {
                 eprintln!("\n❌ Error: {}\n", e);

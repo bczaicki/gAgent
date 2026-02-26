@@ -107,6 +107,18 @@ impl Session {
     pub fn default_path(sessions_dir: &Path, session_id: &str) -> PathBuf {
         sessions_dir.join(format!("{}.jsonl", session_id))
     }
+
+    /// Serialize the session to a compact JSON string (for crash recovery).
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string(self).map_err(GagentError::Json)
+    }
+
+    /// Deserialize a session from a JSON string (from crash recovery).
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_str(json).map_err(|e| {
+            GagentError::Session(format!("Failed to parse session JSON: {e}"))
+        })
+    }
 }
 
 impl Default for Session {
